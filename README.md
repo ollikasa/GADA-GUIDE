@@ -47,11 +47,13 @@ A mobile wellness assistant that:
 
 - Proposal document completed and submitted
 
- UI prototype in Afaan Oromo – planned, not yet built
+ UI prototype in Afaan Oromo ,Amharic and English started
 
- Emotion detection model – planned for offline MVP, not yet implemented
+ Emotion detection model – started  for offline MVP
 
-Firebase integration – planned (based on prior ITMS experience)
+Firebase integration – done 
+demo is ready
+The rest is on the way and possible
 
 ---
 
