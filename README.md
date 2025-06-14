@@ -6,7 +6,7 @@
 
 ##  Overview
 
-**GADA GUIDE** is an inclusive, offline-capable, AI-powered mobile health assistant designed to support the emotional and physical well-being of tourists—especially the elderly, disabled, and illiterate—traveling through Oromia. It uses TinyML, emotion recognition, and culturally intelligent guidance to ensure a safe, stress-free, and inclusive experience.
+**GADA GUIDE** is an inclusive, offline-capable, AI-powered mobile health assistant designed to support the emotional and physical well-being of tourists especially the elderly, disabled, and illiterate traveling through Oromia. It uses TinyML, emotion recognition, and culturally intelligent guidance to ensure a safe, stress-free, and inclusive experience.
 
 ---
 
