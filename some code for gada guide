@@ -1,0 +1,655 @@
+GADA GUIDE 
+
+import csv
+import json
+import os
+import queue
+import random
+import smtplib
+import sqlite3
+import threading
+import tkinter as tk
+from datetime import datetime
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from tkinter import messagebox, filedialog
+import firebase_admin
+import pyttsx3
+import requests
+import sounddevice as sd
+from firebase_admin import credentials, firestore
+from langdetect import detect
+from playsound import playsound
+engine = pyttsx3.init()
+engine.say("Hello, welcome back!")
+engine.runAndWait()
+# For transformer emotion detection
+try:
+    from transformers import pipeline
+    transformer_emotion = pipeline("text-classification", model="j-hartmann/emotion-english-distilroberta-base", return_all_scores=True)
+except ImportError:
+    transformer_emotion = None
+
+# For Google Translate API - placeholder function
+def translate_text(text, target_lang="en"):
+    # You can add real Google Translate API integration here
+    # For demo, just return text unchanged
+    return text
+
+# For Twilio SMS (placeholder values - fill with your account details)
+try:
+    from twilio.rest import Client
+    TWILIO_ACCOUNT_SID = "your_twilio_sid"
+    TWILIO_AUTH_TOKEN = "your_twilio_token"
+    TWILIO_FROM_NUMBER = "+1234567890"
+    TWILIO_TO_NUMBER = "+0987654321"
+    twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+except ImportError:
+    twilio_client = None
+
+# Firebase Admin Init
+def init_firebase_admin():
+    try:
+        cred = credentials.Certificate("firebase_key.json")
+        firebase_admin.initialize_app(cred)
+        global db
+        db = firestore.client()
+        print(" Firebase connected.")
+    except Exception as e:
+        print(" Firebase error:", e)
+
+# Firebase REST Auth
+FIREBASE_API_KEY = "AIzaSyDEG3GftYy5twDt8MpcEyJtvcbtwnCAic4"  # Replace with your Web API Key from Firebase project settings
+
+def firebase_sign_in(email, password):
+    url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={FIREBASE_API_KEY}"
+    payload = {
+        "email": email,
+        "password": password,
+        "returnSecureToken": True
+    }
+    try:
+        r = requests.post(url, json=payload)
+        r.raise_for_status()
+        return r.json()  # Contains idToken, localId (UID), email, etc
+    except Exception as e:
+        print("Login error:", e)
+        return None
+
+# TTS
+def speak(text, lang):
+    engine = pyttsx3.init()
+    voices = engine.getProperty('voices')
+
+    selected_voice = None
+    for voice in voices:
+        if hasattr(voice, 'languages') and voice.languages:
+            language_code = voice.languages[0]
+            if isinstance(language_code, bytes):
+                language_code = language_code.decode('utf-8').lower()
+            else:
+                language_code = str(language_code).lower()
+
+            if lang.lower() in language_code:
+                selected_voice = voice.id
+                break
+
+    if selected_voice:
+        engine.setProperty('voice', selected_voice)
+    else:
+        print(f"No matching voice found for language '{lang}', using default voice.")
+
+    engine.say(text)
+    engine.runAndWait()
+
+# SQLite Init
+def init_db():
+    conn = sqlite3.connect("gada_guide_logs.db")
+    c = conn.cursor()
+
+    # Create tables if they don't exist
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            text_input TEXT,
+            emotion TEXT,
+            intensity REAL,
+            language TEXT,
+            emergency INTEGER
+        )
+    ''')
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS badges (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_email TEXT,
+            badge TEXT,
+            awarded_on TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+#  Enhanced Emotion Detection
+def get_emotion(text):
+    if transformer_emotion:
+        results = transformer_emotion(text)
+        # results is list of dicts with label and score
+        sorted_emotions = sorted(results[0], key=lambda x: x['score'], reverse=True)
+        top_emotion = sorted_emotions[0]
+        label = top_emotion['label'].capitalize()
+        score = top_emotion['score']
+        # Map to emoji (expand as needed)
+        emojis = {
+            "Joy": "😊",
+            "Sadness": "😢",
+            "Anger": "😠",
+            "Fear": "😨",
+            "Surprise": "😲",
+            "Disgust": "🤢",
+            "Neutral": "😐"
+        }
+        emo_emoji = emojis.get(label, "😐")
+        return f"{emo_emoji} {label}", score
+    else:
+        # fallback simple keyword-based
+        text = text.lower()
+        happy = ["happy", "good", "great", "love", "joy", "awesome"]
+        sad = ["sad", "tired", "bad", "angry", "cry", "pain"]
+        if any(word in text for word in happy):
+            return "🙂 Happy", 0.7
+        elif any(word in text for word in sad):
+            return "😟 Sad", 0.7
+        else:
+            return "😐 Neutral", 0.5
+
+#  Emergency Check & Alerts
+def emergency_check(emotion, intensity):
+    # Emergency if intense sadness, fear, anger
+    emergency_emotions = ["😟 Sadness", "😢 Fear", "😠 Anger"]
+    if any(emotion.startswith(e.split()[0]) and intensity > 0.6 for e in emergency_emotions):
+        try:
+            playsound("siren.mp3")
+        except Exception:
+            print("⚠️ Siren playback failed.")
+        # Trigger async emergency alert
+        threading.Thread(target=send_emergency_alert, args=(emotion,)).start()
+        return True
+    return False
+
+def send_emergency_alert(emotion):
+    # Send Email Alert
+    try:
+        sender_email = "your_email@gmail.com"
+        receiver_email = "caregiver@example.com"
+        password = "your_email_password"  # use app password for Gmail
+
+        message = MIMEMultipart("alternative")
+        message["Subject"] = "🚨 Emergency Alert from GADA GUIDE"
+        message["From"] = sender_email
+        message["To"] = receiver_email
+
+        text = f"Emergency detected! User is feeling {emotion}. Please check immediately."
+        # Placeholder for location (if device has GPS integration)
+        location = "Location not available"
+
+        part1 = MIMEText(text + "\n" + location, "plain")
+        message.attach(part1)
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(sender_email, password)
+            server.sendmail(sender_email, receiver_email, message.as_string())
+        print(" Emergency email sent.")
+    except Exception as e:
+        print(" Emergency email failed:", e)
+
+    # Send SMS via Twilio
+    if twilio_client:
+        try:
+            twilio_client.messages.create(
+                body=f"🚨 Emergency detected! Feeling {emotion}. Location: Not available",
+                from_=TWILIO_FROM_NUMBER,
+                to=TWILIO_TO_NUMBER
+            )
+            print("Emergency SMS sent.")
+        except Exception as e:
+            print(" Emergency SMS failed:", e)
+
+#  Greeting
+def get_greeting(msg, emotion="😐"):
+    try:
+        lang = detect(msg)
+    except Exception:
+        lang = "en"
+
+    greetings = {
+        "om": ("Baga Nagaan dhuftan! Akkam jirtu?", {
+            "😊 Joy": "Baga gammaddan! 😊",
+            "😢 Sadness": "Boqodhu akkasumas hafuurfadhu. 🛌",
+            "😐 Neutral": "Nagaan sii haa ta’u. 🙂",
+            "😠 Anger": "Tasgabbiin of eeggadhu. 🧘‍♂️",
+            "😨 Fear": "Waaqa kadhadhu,cimi. 🙏"
+        }),
+        "am": ("ደህና መጡ። እንዴት ነው?", {
+            "😊 Joy": "እንደምትሉን ደስ ይበላ! 😊",
+            "😢 Sadness": "እባክዎ እረፍት ይዝሉ። 🛌",
+            "😐 Neutral": "እሺ፣ በምስጋና! 🙂",
+            "😠 Anger": "ተጠንቀቅ እና አእምሮን ማስተካከል። 🧘‍♂️",
+            "😨 Fear": "ለእግዚአብሔር ጸሎት። 🙏"
+        }),
+
+    "en": ("Welcome! How are you?", {
+        "😊 Joy": "Great to hear that! 😊",
+        "😢 Sadness": "Take a rest and breathe. 🛌",
+        "😐 Neutral": "Okay. Stay safe! 🙂",
+        "😠 Anger": "Try to calm down and meditate. 🧘‍♂️",
+        "😨 Fear": "Pray and stay strong. 🙏"
+    })
+
+    }
+
+    g, s = greetings.get(lang, greetings["en"])
+    return f"{g}\n{s.get(emotion, '')}", lang
+
+#  Offline STT (VOSK)
+from vosk import Model, KaldiRecognizer
+
+model_path = "vosk-model-small-en-us-0.15"  # or use absolute path
+
+use_vosk = False
+vosk_model = None
+recognizer = None
+q = queue.Queue()
+
+if os.path.exists(model_path):
+    try:
+        print("🧠 Loading Vosk model...")
+        vosk_model = Model(model_path)
+        recognizer = KaldiRecognizer(vosk_model, 16000)
+
+        def callback(indata, frames, time, status):
+            q.put(bytes(indata))
+
+        use_vosk = True
+        print(" Vosk model loaded successfully.")
+    except Exception as e:
+        print(f" Failed to load Vosk model: {e}")
+        use_vosk = False
+else:
+    print(f" Vosk model path does not exist: {model_path}")
+    use_vosk = False
+
+def recognize_speech_vosk(duration=5):
+    with sd.RawInputStream(samplerate=16000, blocksize=8000, dtype='int16',
+                           channels=1, callback=callback):
+        print("🎤 Speak now (VOSK)...")
+        text = ""
+        for _ in range(int(16000 / 8000 * duration)):
+            data = q.get()
+            if recognizer.AcceptWaveform(data):
+                result = json.loads(recognizer.Result())
+                text += result.get("text", "")
+        return text.strip()
+
+#  Voice Emotion Recognition (Mock)
+def analyze_voice_emotion(audio_data=None):
+    # Placeholder - in real app, analyze pitch, volume, speed
+    # Here just randomly return an emotion and intensity
+    emotions = ["😊 Joy", "😢 Sadness", "😠 Anger", "😨 Fear", "😐 Neutral"]
+    emotion = random.choice(emotions)
+    intensity = random.uniform(0.5, 0.95)
+    return emotion, intensity
+
+#  Wellness Tips
+WELLNESS_TIPS = {
+    "😊 Joy": ["Keep spreading positivity! 🌟", "Share your happiness with friends 😊"],
+    "😢 Sadness": ["Try deep breathing exercises 🧘‍♂️", "Listen to your favorite music 🎵", "Take a short walk outside 🚶‍♀️"],
+    "😠 Anger": ["Count to 10 slowly 🧠", "Practice meditation 🧘‍♂️", "Write down your feelings ✍️"],
+    "😨 Fear": ["Talk to a trusted friend or family member 🤝", "Practice grounding techniques 🌳"],
+    "😐 Neutral": ["Maintain your routine ⏰", "Stay hydrated 💧"]
+}
+
+#  Simple Chatbot
+CHATBOT_RESPONSES = {
+    "hello": "Hello! How are you feeling today? 😊",
+    "i am sad": "I'm sorry to hear that. Would you like some wellness tips?",
+    "help": "I am here to listen. Tell me more.",
+    "bye": "Take care! Remember, I'm always here if you want to talk."
+}
+
+def chatbot_response(user_input):
+    user_input = user_input.lower()
+    for key in CHATBOT_RESPONSES:
+        if key in user_input:
+            return CHATBOT_RESPONSES[key]
+    return "Tell me more about how you're feeling..."
+
+#  Data Privacy: encrypt/decrypt (simple)
+from cryptography.fernet import Fernet
+
+def load_or_create_key():
+    if os.path.exists("secret.key"):
+        with open("secret.key", "rb") as key_file:
+            return key_file.read()
+    else:
+        key = Fernet.generate_key()
+        with open("secret.key", "wb") as key_file:
+            key_file.write(key)
+        return key
+
+FERNET_KEY = load_or_create_key()
+fernet = Fernet(FERNET_KEY)
+
+def encrypt_text(text):
+    return fernet.encrypt(text.encode()).decode()
+
+def decrypt_text(token):
+    try:
+        return fernet.decrypt(token.encode()).decode()
+    except Exception:
+        return "<decryption error>"
+
+#  Gamification
+def award_badge(user_email, badge_name):
+    conn = sqlite3.connect("gada_guide_logs.db")
+    c = conn.cursor()
+    # Check if badge already awarded
+    c.execute("SELECT id FROM badges WHERE user_email=? AND badge=?", (user_email, badge_name))
+    if c.fetchone():
+        conn.close()
+        return False
+    # Award badge
+    c.execute("INSERT INTO badges (user_email, badge, awarded_on) VALUES (?, ?, ?)",
+              (user_email, badge_name, datetime.now().strftime("%Y-%m-%d")))
+    conn.commit()
+    conn.close()
+    return True
+
+def get_user_badges(user_email):
+    conn = sqlite3.connect("gada_guide_logs.db")
+    c = conn.cursor()
+    c.execute("SELECT badge, awarded_on FROM badges WHERE user_email=?", (user_email,))
+    badges = c.fetchall()
+    conn.close()
+    return badges
+
+#  MainApp Class
+class MainApp:
+    def __init__(self, root, user_info):
+        self.root = root
+        self.user_info = user_info
+        self.uid = user_info.get("localId")
+        self.email = user_info.get("email")
+        self.idToken = user_info.get("idToken")
+
+        self.root.title(f"🧠 GADA GUIDE - Offline Wellness Assistant ({self.email})")
+        self.root.geometry("800x700")
+        self.root.config(bg="#f0f0f8")
+
+        # Variables
+        self.current_emotion = "😐 Neutral"
+        self.current_intensity = 0.5
+        self.current_language = "en"
+        self.chat_mode = False
+
+        # UI Elements
+        self.build_ui()
+
+        init_db()
+        self.first_run_check()
+
+        if not os.path.exists("user_logs.csv"):
+            with open("user_logs.csv", "w", newline="", encoding="utf-8") as f:
+                csv.writer(f).writerow(["Timestamp", "Text", "Emotion", "Intensity", "Language", "Emergency"])
+
+    def build_ui(self):
+        tk.Label(self.root, text="💬 Enter your thoughts:", font=("Segoe UI", 16)).pack(pady=12)
+        self.entry = tk.Entry(self.root, font=("Segoe UI", 14), width=80)
+        self.entry.pack(pady=8)
+
+        btn_frame = tk.Frame(self.root, bg="#f0f0f8")
+        btn_frame.pack(pady=10)
+
+        tk.Button(btn_frame, text="🔍 Analyze Text", command=self.analyze_input, font=("Segoe UI", 13), bg="#4caf50", fg="white").grid(row=0, column=0, padx=8)
+        tk.Button(btn_frame, text="🎤 Voice Input", command=self.voice_analyze_input, font=("Segoe UI", 13), bg="#2196f3", fg="white").grid(row=0, column=1, padx=8)
+        tk.Button(btn_frame, text="🤖 Chatbot Mode", command=self.toggle_chatbot, font=("Segoe UI", 13), bg="#9c27b0", fg="white").grid(row=0, column=2, padx=8)
+        tk.Button(btn_frame, text="📊 Mood Trends", command=self.show_mood_trends, font=("Segoe UI", 13), bg="#ff9800", fg="white").grid(row=0, column=3, padx=8)
+        tk.Button(btn_frame, text="📂 Logs", command=self.show_logs, font=("Segoe UI", 13), bg="#607d8b", fg="white").grid(row=0, column=4, padx=8)
+        tk.Button(btn_frame, text="⚙️ Settings", command=self.show_settings, font=("Segoe UI", 13), bg="#795548", fg="white").grid(row=0, column=5, padx=8)
+
+        # Emoji quick buttons
+        symbol_frame = tk.Frame(self.root, bg="#f0f0f8")
+        symbol_frame.pack(pady=15)
+
+        quick_msgs = [("😷", "I feel sick"), ("🧭", "I’m lost"), ("🆘", "I need help"), ("🗣️", "Can we talk?"), ("🤝", "I need a friend")]
+        for emoji, msg in quick_msgs:
+            tk.Button(symbol_frame, text=emoji, font=("Segoe UI Emoji", 18), width=5,
+                      command=lambda m=msg: (self.entry.delete(0, tk.END), self.entry.insert(0, m), self.analyze_input())).pack(side=tk.LEFT, padx=6)
+
+        self.label_result = tk.Label(self.root, text="", font=("Segoe UI", 20), fg="#333", bg="#f0f0f8")
+        self.label_result.pack(pady=10)
+
+        self.label_advice = tk.Label(self.root, text="", font=("Segoe UI", 14), fg="#555", wraplength=750, bg="#f0f0f8")
+        self.label_advice.pack(pady=10)
+
+        self.label_chatbot = tk.Label(self.root, text="", font=("Segoe UI", 14, "italic"), fg="#007acc", wraplength=750, bg="#f0f0f8")
+        self.label_chatbot.pack(pady=10)
+
+        self.btn_export_logs = tk.Button(self.root, text="⬇️ Export Logs", command=self.export_logs, font=("Segoe UI", 12), bg="#009688", fg="white")
+        self.btn_export_logs.pack(side=tk.LEFT, padx=20, pady=10)
+
+        self.btn_delete_logs = tk.Button(self.root, text="🗑️ Delete Logs", command=self.delete_logs, font=("Segoe UI", 12), bg="#e53935", fg="white")
+        self.btn_delete_logs.pack(side=tk.RIGHT, padx=20, pady=10)
+
+    def first_run_check(self):
+        if not os.path.exists("first_run_done.txt"):
+            messagebox.showinfo("Welcome to GADA GUIDE",
+                                "Thank you for using GADA GUIDE!\n\nType or speak your feelings, "
+                                "and I'll help detect your emotion and suggest wellness tips.\n\n"
+                                "Emergency alerts will be sent to your caregivers if needed.\n\n"
+                                "Let's get started!")
+            with open("first_run_done.txt", "w") as f:
+                f.write("done")
+
+    def analyze_input(self):
+        text = self.entry.get().strip()
+        if not text:
+            messagebox.showwarning("Input needed", "Please enter your thoughts first.")
+            return
+
+        if self.chat_mode:
+            # Chatbot mode
+            response = chatbot_response(text)
+            self.label_chatbot.config(text="🤖 Chatbot: " + response)
+            self.label_result.config(text="")
+            self.label_advice.config(text="")
+            self.entry.delete(0, tk.END)
+            return
+
+        # Language detection
+        try:
+            detected_lang = detect(text)
+        except Exception:
+            detected_lang = "en"
+        self.current_language = detected_lang
+
+        # Translate to English if needed for emotion detection
+        text_for_emotion = translate_text(text, "en")
+
+        emotion, intensity = get_emotion(text_for_emotion)
+        self.current_emotion = emotion
+        self.current_intensity = intensity
+
+        # Emergency check
+        emergency_flag = emergency_check(emotion, intensity)
+
+        # Greeting + wellness tips
+        greeting, lang = get_greeting(text, emotion)
+        tips = WELLNESS_TIPS.get(emotion, ["Stay positive!"])
+
+        advice = random.choice(tips)
+        self.label_result.config(text=f"Detected Emotion: {emotion} (Intensity: {intensity:.2f})")
+        self.label_advice.config(text=f"{greeting}\nWellness Tip: {advice}")
+
+        self.label_chatbot.config(text="")
+        self.entry.delete(0, tk.END)
+
+        # Save to CSV
+        self.save_log(text, emotion, intensity, detected_lang, emergency_flag)
+
+        # Award badges
+        if intensity > 0.8:
+            badge_awarded = award_badge(self.email, "Expressive User")
+            if badge_awarded:
+                messagebox.showinfo("🏅 Badge Awarded", "You earned the 'Expressive User' badge!")
+
+    def voice_analyze_input(self):
+        if use_vosk:
+            text = recognize_speech_vosk()
+            if not text:
+                messagebox.showwarning("Voice input failed", "Could not recognize your speech. Please try again.")
+                return
+        else:
+            messagebox.showinfo("Voice input unavailable", "Offline speech recognition model not found.")
+            return
+
+        # Also get mock voice emotion
+        voice_emotion, voice_intensity = analyze_voice_emotion()
+        self.entry.delete(0, tk.END)
+        self.entry.insert(0, text)
+        self.analyze_input()
+        self.label_result.config(text=f"Text Emotion: {self.current_emotion} | Voice Emotion: {voice_emotion}")
+
+    def save_log(self, text, emotion, intensity, lang, emergency):
+        # Save encrypted in SQLite for privacy
+        conn = sqlite3.connect("gada_guide_logs.db")
+        c = conn.cursor()
+        c.execute("INSERT INTO logs (timestamp, text_input, emotion, intensity, language, emergency) VALUES (?, ?, ?, ?, ?, ?)",
+                  (datetime.now().isoformat(), encrypt_text(text), emotion, intensity, lang, int(emergency)))
+        conn.commit()
+        conn.close()
+
+        # Also save plaintext CSV for backup if you want (not encrypted)
+        with open("user_logs.csv", "a", newline="", encoding="utf-8") as f:
+            csv.writer(f).writerow([datetime.now().isoformat(), text, emotion, intensity, lang, int(emergency)])
+
+    def show_mood_trends(self):
+        # Show a simple text-based mood trends (could integrate matplotlib)
+        conn = sqlite3.connect("gada_guide_logs.db")
+        c = conn.cursor()
+        c.execute("SELECT emotion, COUNT(*) FROM logs GROUP BY emotion")
+        data = c.fetchall()
+        conn.close()
+
+        trend_text = "📈 Mood Trends Summary:\n"
+        total = sum(count for _, count in data)
+        for emo, count in data:
+            percent = (count / total * 100) if total else 0
+            trend_text += f"{emo}: {count} entries ({percent:.1f}%)\n"
+
+        messagebox.showinfo("Mood Trends", trend_text)
+
+    def show_logs(self):
+        # Show last 10 logs
+        conn = sqlite3.connect("gada_guide_logs.db")
+        c = conn.cursor()
+        c.execute("SELECT timestamp, text_input, emotion, intensity, language, emergency FROM logs ORDER BY timestamp DESC LIMIT 10")
+        rows = c.fetchall()
+        conn.close()
+
+        logs_text = "🗂️ Last 10 Logs:\n"
+        for r in rows:
+            timestamp, text_enc, emo, inten, lang, emg = r
+            text_dec = decrypt_text(text_enc)
+            inten_str = f"{inten:.2f}" if inten is not None else "N/A"
+            logs_text += f"{timestamp} | {text_dec} | {emo} ({inten_str}) | Lang: {lang} | Emergency: {'Yes' if emg else 'No'}\n"
+
+        messagebox.showinfo("Logs", logs_text)
+
+    def export_logs(self):
+        filepath = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV files", "*.csv")])
+        if filepath:
+            conn = sqlite3.connect("gada_guide_logs.db")
+            c = conn.cursor()
+            c.execute("SELECT timestamp, text_input, emotion, intensity, language, emergency FROM logs ORDER BY timestamp")
+            rows = c.fetchall()
+            conn.close()
+            with open(filepath, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Timestamp", "Text", "Emotion", "Intensity", "Language", "Emergency"])
+                for r in rows:
+                    text_dec = decrypt_text(r[1])
+                    writer.writerow([r[0], text_dec, r[2], r[3], r[4], r[5]])
+            messagebox.showinfo("Export Logs", f"Logs exported to {filepath}")
+
+    def delete_logs(self):
+        if messagebox.askyesno("Delete Logs", "Are you sure you want to delete all logs? This action cannot be undone."):
+            conn = sqlite3.connect("gada_guide_logs.db")
+            c = conn.cursor()
+            c.execute("DELETE FROM logs")
+            conn.commit()
+            conn.close()
+            messagebox.showinfo("Logs Deleted", "All logs have been deleted.")
+
+    def toggle_chatbot(self):
+        self.chat_mode = not self.chat_mode
+        if self.chat_mode:
+            self.label_chatbot.config(text="🤖 Chatbot Mode Enabled. Type your messages and I will respond.")
+            self.label_result.config(text="")
+            self.label_advice.config(text="")
+        else:
+            self.label_chatbot.config(text="")
+            self.label_result.config(text="")
+            self.label_advice.config(text="")
+        self.entry.delete(0, tk.END)
+
+    def show_settings(self):
+        settings_win = tk.Toplevel(self.root)
+        settings_win.title("⚙️ Settings")
+        settings_win.geometry("400x400")
+        tk.Label(settings_win, text="Settings & Privacy", font=("Segoe UI", 16)).pack(pady=10)
+
+        tk.Label(settings_win, text="User Email: " + self.email, font=("Segoe UI", 12)).pack(pady=5)
+
+        badges = get_user_badges(self.email)
+        badge_text = "Badges:\n" + "\n".join([f"{b[0]} (Awarded: {b[1]})" for b in badges]) if badges else "No badges earned yet."
+        tk.Label(settings_win, text=badge_text, font=("Segoe UI", 12), fg="#4caf50").pack(pady=10)
+
+        tk.Button(settings_win, text="Close", command=settings_win.destroy).pack(pady=20)
+
+# ------------------ Login UI ------------------
+def login():
+    def try_login():
+        email = entry_email.get().strip()
+        password = entry_password.get().strip()
+        if not email or not password:
+            messagebox.showwarning("Input needed", "Please enter both email and password.")
+            return
+
+        res = firebase_sign_in(email, password)
+        if res:
+            messagebox.showinfo("Login Successful", f"Welcome, {email}!")
+            login_win.destroy()
+            root = tk.Tk()
+            app = MainApp(root, res)
+            root.mainloop()
+        else:
+            messagebox.showerror("Login Failed", "Incorrect email or password.")
+
+    login_win = tk.Tk()
+    login_win.title("Login to GADA GUIDE")
+    login_win.geometry("400x300")
+    tk.Label(login_win, text="Email:", font=("Segoe UI", 14)).pack(pady=8)
+    entry_email = tk.Entry(login_win, font=("Segoe UI", 14), width=30)
+    entry_email.pack(pady=5)
+    tk.Label(login_win, text="Password:", font=("Segoe UI", 14)).pack(pady=8)
+    entry_password = tk.Entry(login_win, font=("Segoe UI", 14), width=30, show="*")
+    entry_password.pack(pady=5)
+    tk.Button(login_win, text="Login", font=("Segoe UI", 14), bg="#4caf50", fg="white", command=try_login).pack(pady=20)
+    login_win.mainloop()
+#  Main
+if __name__ == "__main__":
+    init_firebase_admin()
+    init_db()
+    login()
