@@ -92,7 +92,7 @@ We are currently looking for:
 
 - OLJITRA LIKASA NAFABAS – Founder & AI Developer  
 - Email: oljelikonafo@gmail.com  
-- GitHub: [github.com/ollikasa(https://github.com/ollikasa)
+- GitHub: https://github.com/ollikasa
 
 ---
 
