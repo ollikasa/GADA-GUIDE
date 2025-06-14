@@ -44,16 +44,15 @@ A mobile wellness assistant that:
 ---
 
 ##  Project Status
-
 - Proposal document completed and submitted
-
  UI prototype in Afaan Oromo ,Amharic and English started
-
  Emotion detection model – started  for offline MVP
-
 Firebase integration – done 
 demo is ready
-The rest is on the way and possible
+dashboard done
+user login done
+text,voice and chatbot interactin done for demo
+The rest is on the way and everthing is possible and i am working on it
 
 ---
 
