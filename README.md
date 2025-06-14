@@ -18,8 +18,6 @@ Tourists often face:
 - No inclusive, offline health support for travel
 - Barriers for disabled, elderly, or illiterate visitors
 
----
-
 ##  Solution: GADA GUIDE
 
 A mobile wellness assistant that:
