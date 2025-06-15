@@ -1,17 +1,13 @@
 # GADA GUIDE
 
 **Emotion-Aware Health & Wellness Companion for Tourists and Hospitality in Oromia**
-
 ---
 
 ##  Overview
 
 **GADA GUIDE** is an inclusive, offline-capable, AI-powered mobile health assistant designed to support the emotional and physical well-being of tourists especially the elderly, disabled, and illiterate traveling through Oromia. It uses TinyML, emotion recognition, and culturally intelligent guidance to ensure a safe, stress-free, and inclusive experience.
-
 ---
-
 ##  Problem Statement
-
 Tourists often face:
 - Emotional stress in unfamiliar environments
 - Lack of accessible health and communication tools
@@ -27,40 +23,32 @@ A mobile wellness assistant that:
 - Features **symbol-based & voice UI** for non-readers or disabled users
 - Offers **multilingual guidance**, cultural etiquette tips, and emergency alerts
 - Builds a **real-time wellness heatmap** for safe tourism zones
-
+##  Project Features and Status
+* Emotion detection partially done
+* Offline AI health assistant progress
+* Multilingual (Afaan Oromo, Amharic, English) | In progress |
+* Symbol/Voice UI for illiterate users | Prototyped |
+* Emergency alerts (SOS + cultural first aid) | Planned |
+* Culturally aware tourist tips planned
+* Proposal document completed and submitted
+* UI prototype in Afaan Oromo ,Amharic and English started
+* Emotion detection model – started  for offline MVP
+* Firebase integration – done 
+* demo is ready
+* dashboard done
+* user login done
+* The Firebase and SQLite databases are set up and initialized correctly.
+* Basic emotion detection functionality is implemented.
+* A functional GUI allows users to interact with the application easily.
+* Speech-to-text features are integrated but may require an internet connection for Google services.
+* Basic error handling is present, particularly for Firebase and translation functions.
+* text,voice and chatbot interactin done for demo
+* The rest is on the way and everthing is possible and i am working on it
 ---
-
-##  Features
-
-| Feature | Status |
-|--------|--------|
-| Emotion detection (face, voice, breath) | MVP-ready |
-| Offline AI health assistant | MVP-ready |
-| Multilingual (Afaan Oromo, Amharic, English) | In progress |
-| Symbol/Voice UI for illiterate users | Prototyped |
-| Emergency alerts (SOS + cultural first aid) | Planned |
-| Culturally aware tourist tips | Integrated |
-
----
-
-##  Project Status
-- Proposal document completed and submitted
- UI prototype in Afaan Oromo ,Amharic and English started
- Emotion detection model – started  for offline MVP
-Firebase integration – done 
-demo is ready
-dashboard done
-user login done
-text,voice and chatbot interactin done for demo
-The rest is on the way and everthing is possible and i am working on it
-
----
-
 ##  Files in This Repo
 
-- `GADA_GUIDE_Proposal.pdf`: Full proposal document submitted to Hackathon
-- `README.md`: Project summary and technical overview
-
+`GADA_GUIDE_Proposal.pdf`: Full proposal document submitted to Hackathon
+`README.md`: Project summary and technical overview
 ---
 
 ##  Prior Experience
