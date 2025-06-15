@@ -1,0 +1,458 @@
+"""GADA GUIDE Full Integrated Application
+This script includes all components:
+Emotion detection
+Multilingual support
+Voice-guided feedback
+Vital signs monitoring via webcam
+External sensor simulation
+Symbol-based input 
+Offline translation
+Emergency alert
+Wellness heatmap
+SQLite + CSV logging
+Gamification (badge award)
+Tkinter GUI"""
+import csv
+import datetime
+import os
+import random
+import sqlite3
+import tempfile
+import tkinter as tk
+from tkinter import messagebox, ttk, filedialog
+import cv2
+import firebase_admin
+import matplotlib.pyplot as plt
+import numpy as np
+import playsound
+import pyttsx3
+import speech_recognition as sr
+from cryptography.fernet import Fernet
+from firebase_admin import credentials, firestore
+from googletrans import Translator
+from gtts import gTTS
+from langdetect import detect
+from scipy.signal import find_peaks
+from location.map_helper import show_user_location
+from translator.image_ocr import translate_image_text
+# Firebase Setup
+def init_firebase():
+    try:
+        cred = credentials.Certificate("firebase_key.json")
+        firebase_admin.initialize_app(cred)
+        global db
+        db = firestore.client()
+        print(" Firebase connected.")
+    except Exception as e:
+        print("❌ Firebase error:", e) 
+def save_emotion_to_firebase(email, emotion, text):
+    try:
+        doc_ref = db.collection("emotion_logs").document(email)
+        doc_ref.set({
+            "email": email,
+            "last_emotion": emotion,
+            "last_text": text,
+            "timestamp": firestore.SERVER_TIMESTAMP
+        }, merge=True)
+        print(f" Data saved for {email}")
+    except Exception as e:
+        print("❌ Error saving to Firebase:", e)
+# 🔹 Emotion Analysis
+def analyze_emotion(text):
+    positive = ['happy', 'good', 'great', 'love', 'awesome']
+    negative = ['sad', 'bad', 'angry', 'hate', 'terrible']
+    t = text.lower()
+    if any(word in t for word in positive):
+        return "Positive"
+    elif any(word in t for word in negative):
+        return "Negative"
+    else:
+        return "Neutral"
+#  Submit Action
+def submit():
+    email = email_entry.get().strip()
+    text = emotion_text_box.get("1.0", "end-1c").strip()
+    
+    if not email or not text:
+        messagebox.showerror("Error", "Please enter email and emotion text.")
+        return
+    emotion = analyze_emotion(text)
+    save_emotion_to_firebase(email, emotion, text)
+    messagebox.showinfo("Emotion Result", f"Emotion Detected: {emotion}")
+
+#  GUI Setup
+init_firebase()
+
+root = tk.Tk()
+root.title("Emotion Analysis with Firebase")
+
+label_font = ("Arial", 12)
+
+ttk.Label(root, text="Enter Email:", font=label_font).pack(pady=5)
+email_entry = ttk.Entry(root, font=label_font, width=50)
+email_entry.pack()
+
+ttk.Label(root, text="Enter Your Emotion Text:", font=label_font).pack(pady=5)
+emotion_text_box = tk.Text(root, font=label_font, height=6, width=50)
+emotion_text_box.pack()
+
+ttk.Button(root, text="Analyze & Save", command=submit).pack(pady=10)
+
+root.mainloop()
+
+# Encryption Setup
+def load_or_create_key():
+    key_file = "secret.key"
+    if os.path.exists(key_file):
+        with open(key_file, "rb") as f:
+            return f.read()
+    else:
+        key = Fernet.generate_key()
+        with open(key_file, "wb") as f:
+            f.write(key)
+        return key
+
+FERNET_KEY = load_or_create_key()
+fernet = Fernet(FERNET_KEY)
+
+def encrypt_text(text):
+    return fernet.encrypt(text.encode()).decode()
+
+def decrypt_text(token):
+    try:
+        return fernet.decrypt(token.encode()).decode()
+    except Exception:
+        return "<decryption error>"
+
+# Emotion Detection
+def get_emotion(text):
+    text = text.lower()
+    if any(word in text for word in ["happy", "joy", "love", "glad"]):
+        return "happy", random.randint(70, 100)
+    elif any(word in text for word in ["sad", "tired", "lonely", "depressed"]):
+        return "sad", random.randint(50, 70)
+    elif any(word in text for word in ["sick", "pain", "help", "unwell", "hurt"]):
+        return "unwell", random.randint(30, 60)
+    elif any(word in text for word in ["angry", "mad", "frustrated"]):
+        return "angry", random.randint(60, 90)
+    else:
+        return "neutral", random.randint(60, 80)
+
+def emergency_check(emotion, intensity):
+    return emotion == "unwell" and intensity < 50
+
+# Phrasebook for Translation
+PHRASEBOOK = {
+    "en": {
+        "greeting_happy": "Glad to hear you're feeling great! Enjoy your trip!",
+        "greeting_sad": "I'm here to help. Would you like some relaxing music or tips nearby?",
+        "greeting_unwell": "You seem unwell. Please seek assistance. Should I alert a guide or contact emergency?",
+        "greeting_angry": "I'm here to listen. Would you like to share more?",
+        "greeting_neutral": "Thanks for checking in!"
+    },
+    "am": {
+        "greeting_happy": "ደስ ይበልዎት! ጉዞዎን ደስታ ይሁንላችሁ!",
+        "greeting_sad": "እኔ እዚህ ነኝ ለመርዳት።",
+        "greeting_unwell": "ደህና አይደሉም። እባክዎን እገዛ ይፈልጉ።",
+        "greeting_angry": "እኔ ስለ እርስዎ ሰምቻለሁ።",
+        "greeting_neutral": "እናመሰግናለን ለመረጃዎ!"
+    },
+    "om": {
+        "greeting_happy": "Jajjabeeffadha! Imala kee gammachuun guutamuu qaba!",
+        "greeting_sad": "Sagalee boqonnaa ykn bakka siif wayituu barbaaddaa?",
+        "greeting_unwell": "Ati dadhabee fakkaatta. Gargaarsa barbaadi.",
+        "greeting_angry": "Ani si dhageesseera.",
+        "greeting_neutral": "Galatoomi odeeffannoo keetiif!"
+    },
+    "ar": {
+        "greeting_happy": "سعيد لسماع أنك بخير! استمتع برحلتك!",
+        "greeting_sad": "أنا هنا للمساعدة.",
+        "greeting_unwell": "تبدو مريضًا. يرجى طلب المساعدة.",
+        "greeting_angry": "أنا هنا للاستماع.",
+        "greeting_neutral": "شكرًا لتواصلك!"
+    }
+}
+
+def translate_offline(phrase_key, lang='en'):
+    return PHRASEBOOK.get(lang, PHRASEBOOK['en']).get(phrase_key, PHRASEBOOK['en'][phrase_key])
+
+def get_greeting(text, emotion, lang='en'):
+    key = f"greeting_{emotion}"
+    return translate_offline(key, lang)
+
+# Text-to-Speech
+def speak(text, lang='en'):
+    # Use pyttsx3 only if English (or system default)
+    if lang == 'en':
+        engine = pyttsx3.init()
+        engine.setProperty('rate', 150)
+        voices = engine.getProperty('voices')
+        engine.setProperty('voice', voices[0].id)  # default English voice
+        engine.say(text)
+        engine.runAndWait()
+    else:
+        # Use gTTS for other languages (requires internet)
+        try:
+            tts = gTTS(text=text, lang=lang)
+            with tempfile.NamedTemporaryFile(delete=True, suffix=".mp3") as fp:
+                tts.save(fp.name)
+                playsound.playsound(fp.name)
+        except Exception as e:
+            print(f"Error in gTTS: {e}")
+            # fallback to pyttsx3 even if language mismatch
+            engine = pyttsx3.init()
+            engine.say(text)
+            engine.runAndWait()
+# Gamification
+def award_badge(user_email, badge_name):
+    conn = sqlite3.connect("gada_guide_logs.db")
+    c = conn.cursor()
+    c.execute("INSERT INTO badges (user_email, badge_name, timestamp) VALUES (?, ?, ?)",
+              (user_email, badge_name, datetime.datetime.now()))
+    conn.commit()
+    conn.close()
+
+# Database Init
+def init_db():
+    conn = sqlite3.connect("gada_guide_logs.db")
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS logs (
+                 id INTEGER PRIMARY KEY,
+                 user_email TEXT,
+                 input_text TEXT,
+                 emotion TEXT,
+                 intensity INTEGER,
+                 encrypted_log TEXT,
+                 timestamp TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS badges (
+                 id INTEGER PRIMARY KEY,
+                 user_email TEXT,
+                 badge_name TEXT,
+                 timestamp TEXT)''')
+    conn.commit()
+    conn.close()
+
+# Logging
+def log_data(user_email, text, emotion, intensity):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    encrypted = encrypt_text(f"{text}|{emotion}|{intensity}|{timestamp}")
+    with open("user_logs.csv", mode="a", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow([user_email, text, emotion, intensity, timestamp])
+    conn = sqlite3.connect("gada_guide_logs.db")
+    c = conn.cursor()
+    c.execute("INSERT INTO logs (user_email, input_text, emotion, intensity, encrypted_log, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+              (user_email, text, emotion, intensity, encrypted, timestamp))
+    conn.commit()
+    conn.close()
+# Webcam-based Pulse Monitor
+def analyze_pulse_from_camera(duration=10):
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        return None
+    green_intensity = []
+    start_time = datetime.datetime.now()
+    while (datetime.datetime.now() - start_time).seconds < duration:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        h, w, _ = frame.shape
+        roi = frame[h//2-50:h//2+50, w//2-50:w//2+50]
+        mean_green = np.mean(roi[:, :, 1])
+        green_intensity.append(mean_green)
+        cv2.rectangle(frame, (w//2-50, h//2-50), (w//2+50, h//2+50), (0,255,0), 2)
+        cv2.putText(frame, "Place finger or face in box - Press Q", (10,30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
+        cv2.imshow("Pulse Detection", frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+    cap.release()
+    cv2.destroyAllWindows()
+    if len(green_intensity) < 2:
+        return None
+    signal = np.array(green_intensity)
+    signal = (signal - np.mean(signal)) / np.std(signal)
+    peaks, _ = find_peaks(signal, distance=15)
+    beats = len(peaks)
+    bpm = beats * (60 / duration)
+    return int(bpm)
+
+# Sensor Simulation
+def simulate_external_sensor_reading():
+    return random.randint(60, 100)
+
+# Heatmap Export
+def export_wellness_heatmap():
+    conn = sqlite3.connect("gada_guide_logs.db")
+    c = conn.cursor()
+    c.execute("SELECT timestamp, intensity FROM logs ORDER BY timestamp")
+    data = c.fetchall()
+    conn.close()
+    if not data:
+        messagebox.showwarning("No Data", "No wellness data available to plot.")
+        return
+    times = []
+    for row in data:
+        try:
+            time = datetime.datetime.strptime(row[0], "%Y-%m-%dT%H:%M:%S.%f")
+        except ValueError:
+            try:
+                time = datetime.datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                # Optional: handle or skip unknown format
+                print(f"Unknown datetime format: {row[0]}")
+                continue
+        times.append(time)
+    intensities = [row[1] for row in data]
+    plt.figure(figsize=(10,5))
+    plt.plot(times, intensities, marker='o', linestyle='-', color='blue')
+    plt.title("Wellness Intensity Over Time")
+    plt.xlabel("Time")
+    plt.ylabel("Emotion Intensity (%)")
+    plt.grid(True)
+    plt.tight_layout()
+    save_path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG Files","*.png")], title="Save Wellness Heatmap")
+    if save_path:
+        plt.savefig(save_path)
+        messagebox.showinfo("Saved", f"Heatmap saved to {save_path}")
+    plt.close()
+def speech_to_speech_translate_gui(selected_lang_code):
+    recognizer = sr.Recognizer()
+    mic = sr.Microphone()
+    translator = Translator()
+
+    messagebox.showinfo("Speak Now", "Please speak now. Listening...")
+
+    with mic as source:
+        recognizer.adjust_for_ambient_noise(source)
+        audio = recognizer.listen(source)
+
+    try:
+        # Recognize speech using Google Speech Recognition
+        spoken_text = recognizer.recognize_google(audio)
+    except Exception as e:
+        messagebox.showerror("Error", f"Could not understand audio: {e}")
+        return
+
+    try:
+        # Detect source language automatically
+        detected_lang = translator.detect(spoken_text).lang
+    except Exception:
+        detected_lang = 'en'  # fallback
+
+    try:
+        # Translate to target language
+        translated = translator.translate(spoken_text, src=detected_lang, dest=selected_lang_code)
+        translated_text = translated.text
+    except Exception as e:
+        messagebox.showerror("Error", f"Translation failed: {e}")
+        return
+
+    # Show translation in messagebox
+    messagebox.showinfo("Translation", f"Detected Language: {detected_lang}\n\nOriginal: {spoken_text}\n\nTranslated: {translated_text}")
+
+    # Speak the translated text aloud using gTTS
+    try:
+        tts = gTTS(text=translated_text, lang=selected_lang_code)
+        with tempfile.NamedTemporaryFile(delete=True, suffix=".mp3") as fp:
+            tts.save(fp.name)
+            playsound.playsound(fp.name)
+    except Exception as e:
+        messagebox.showerror("Error", f"Text-to-Speech error: {e}")
+# GUI
+
+def run_gui():
+    root = tk.Tk()
+    root.title("🧭 GADA GUIDE - Wellness & Emotion Assistant 🧭")
+    root.geometry("720x520")
+    root.configure(bg="#2C3E50")
+    label_font = ("Arial", 14)
+    button_font = ("Arial", 16, "bold")
+    style = ttk.Style()
+    style.configure("TLabel", background="#2C3E50", foreground="white", font=label_font)
+    style.configure("TButton", font=button_font)
+    ttk.Label(root, text="📧 Email:").pack(pady=3)
+    email_entry = ttk.Entry(root, font=label_font, width=50)
+    email_entry.pack()
+    ttk.Label(root, text="🌐 Select Target Language:").pack(pady=3)
+    language_options = {
+        "English": "en",
+        "Afaan Oromo": "om",
+        "Amharic": "am",
+        "French": "fr",
+        "Arabic": "ar",
+        "Chinese": "zh-cn"
+    }
+    selected_language = tk.StringVar(value="English")  # default English
+    language_dropdown = ttk.Combobox(root, values=list(language_options.keys()), textvariable=selected_language,
+                                     state="readonly")
+    language_dropdown.pack()
+    ttk.Label(root, text="🗣️ How are you feeling today?").pack(pady=3)
+    input_box = tk.Text(root, height=7, width=65, font=label_font)
+    input_box.pack()
+    result_label = ttk.Label(root, text="", wraplength=680, font=label_font)
+    result_label.pack(pady=10)
+    def symbol_input(text):
+        input_box.delete("1.0", tk.END)
+        input_box.insert(tk.END, text)
+        speak(text)
+    symbols = {
+        "😊 Happy": "I feel happy and joyful today!",
+        "😢 Sad": "I feel a bit sad and tired.",
+        "🤒 Unwell": "I feel sick and need help.",
+        "😠 Angry": "I feel angry and frustrated.",
+        "😐 Neutral": "I feel okay, nothing special."
+    }
+    symbol_frame = ttk.Frame(root)
+    symbol_frame.pack(pady=8)
+    for label, phrase in symbols.items():
+        btn = ttk.Button(symbol_frame, text=label, width=12, command=lambda p=phrase: symbol_input(p))
+        btn.pack(side=tk.LEFT, padx=4)
+
+    def select_image_translate():
+        file_path = filedialog.askopenfilename()
+        if file_path:
+            try:
+                lang = 'en'  # or detect(text) if you want dynamic detection
+                original, translated = translate_image_text(file_path, lang)
+                messagebox.showinfo("Image Translation", f"Original: {original}\n\nTranslated: {translated}")
+                speak(translated, lang)
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+    def analyze():
+        user_email = email_entry.get().strip()
+        text = input_box.get("1.0", tk.END).strip()
+        if not user_email or not text:
+            messagebox.showwarning("Missing Data", "Please enter your email and how you feel.")
+            return
+        try:
+            lang = detect(text)
+        except:
+            lang = 'en'
+        emotion, intensity = get_emotion(text)
+        log_data(user_email, text, emotion, intensity)
+        greeting = get_greeting(text, emotion, lang)
+        speak(greeting, lang)
+        result_label.config(text=f"Emotion: {emotion.capitalize()} ({intensity}%)\nAdvice: {greeting}")
+        if emergency_check(emotion, intensity):
+            messagebox.showerror("🚨 Emergency Alert", "Health warning detected! Seek help immediately.")
+
+    # ----------------- Action Buttons -----------------
+    # Button to trigger speech-to-speech translation
+    def on_speech_translate():
+        lang_code = language_options[selected_language.get()]
+        speech_to_speech_translate_gui(lang_code)
+
+    speech_button = ttk.Button(root, text="🎙️ Speak & Translate", command=on_speech_translate)
+    speech_button.pack(pady=10)
+    ttk.Button(root, text="📷 Translate Image", command=select_image_translate).pack(pady=6)
+    ttk.Button(root, text="🎙️ Speak & Translate", command=lambda: speech_to_speech_translate_gui(language_options[selected_language.get()])).pack(pady=6)
+    ttk.Button(root, text="🗺️ Show My Location", command=show_user_location).pack(pady=6)
+    ttk.Button(root, text="🧠 Analyze Emotion", command=analyze).pack(pady=6)
+    ttk.Button(root, text="❤️ Check Vital Signs", command=lambda: messagebox.showinfo("Heart Rate", f"{analyze_pulse_from_camera()} BPM")).pack(pady=6)
+    ttk.Button(root, text="📡 Simulate Sensor", command=lambda: messagebox.showinfo("Sensor", f"Pulse: {simulate_external_sensor_reading()} BPM")).pack(pady=6)
+    ttk.Button(root, text="📊 Export Heatmap", command=export_wellness_heatmap).pack(pady=6)
+    root.mainloop()
+
+if __name__ == "__main__":
+    init_db()
+    run_gui()
