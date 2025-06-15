@@ -37,11 +37,11 @@ A mobile wellness assistant that:
 * demo is ready
 * dashboard done
 * user login done
-* The Firebase and SQLite databases are set up and initialized correctly.
-* Basic emotion detection functionality is implemented.
-* A functional GUI allows users to interact with the application easily.
-* Speech-to-text features are integrated but may require an internet connection for Google services.
-* Basic error handling is present, particularly for Firebase and translation functions.
+* The Firebase and SQLite databases are set up and initialized correctly
+* Basic emotion detection functionality is implemented
+* A functional GUI allows users to interact with the application easily
+* Speech-to-text features are integrated but may require an internet connection for Google services
+* Basic error handling is present, particularly for Firebase and translation functions
 * text,voice and chatbot interactin done for demo
 * The rest is on the way and everthing is possible and i am working on it
 ---
