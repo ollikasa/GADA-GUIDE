@@ -26,9 +26,9 @@ A mobile wellness assistant that:
 ##  Project Features and Status
 * Emotion detection partially done
 * Offline AI health assistant progress
-* Multilingual (Afaan Oromo, Amharic, English) | In progress |
-* Symbol/Voice UI for illiterate users | Prototyped |
-* Emergency alerts (SOS + cultural first aid) | Planned |
+* Multilingual (Afaan Oromo, Amharic, English) In progress
+* Symbol/Voice UI for illiterate users Prototyped 
+* Emergency alerts (SOS + cultural first aid) Planned 
 * Culturally aware tourist tips planned
 * Proposal document completed and submitted
 * UI prototype in Afaan Oromo ,Amharic and English started
