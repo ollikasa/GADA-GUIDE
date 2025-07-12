@@ -653,3 +653,583 @@ if __name__ == "__main__":
     init_firebase_admin()
     init_db()
     login()
+# other modified code 
+
+
+import subprocess
+import csv
+import datetime
+import os
+import random
+import sqlite3
+import sys
+import tempfile
+import threading
+import tkinter as tk
+import webbrowser
+from tkinter import messagebox, ttk, filedialog
+import cv2
+import firebase_admin
+import matplotlib.pyplot as plt
+import numpy as np
+import playsound
+import pyttsx3
+import speech_recognition as sr
+from cryptography.fernet import Fernet
+from firebase_admin import credentials, firestore
+from gtts import gTTS
+from googletrans import Translator
+from langdetect import detect
+from scipy.signal import find_peaks
+#from gui_7th import root
+# You need to have these modules in your PYTHONPATH or your project folder
+from location.map_helper import show_user_location
+from translator.image_ocr import translate_image_text
+# --- Globals ---
+locked_buttons = []
+donation_unlocked = False
+USER_PREFERENCES = {}  # cache favorites etc.
+# --- Fonts & Styles ---
+FONT_LABEL = ("Segoe UI", 14)
+FONT_BUTTON = ("Segoe UI Semibold", 16, "bold")
+BTN_WIDTH = 25
+LOCK_EMOJI = "🔒"
+# --- Load offline tourism data ---
+def load_tourism_data():
+    # Replace with your actual offline JSON dataset of attractions
+    sample_data = [
+        {"name": "Blue Nile Falls", "category": "Nature", "city": "Bahirdar",
+         "description": "A stunning waterfall on Blue Nile river.", "tips": "Best visited in dry season."},
+        {"name": "Lalibela Churches", "category": "Historical", "city": "Lalibela",
+         "description": "Rock-hewn churches dating back to 12th century.", "tips": "Wear comfortable shoes."},
+        {"name": "Addis Ababa Museum", "category": "Cultural", "city": "Addis Ababa",
+         "description": "Learn about Ethiopian history and culture.", "tips": "Closed on Mondays."}
+    ]
+    return sample_data
+TOURISM_DATA = load_tourism_data()
+# --- Monetization ---
+def open_paypal():
+    global donation_unlocked
+    webbrowser.open("https://www.paypal.com/donate/?hosted_button_id=YOUR_BUTTON_ID")
+    confirm = messagebox.askyesno("Confirm Payment", "Have you completed your donation?")
+    if confirm:
+        donation_unlocked = True
+        unlock_features()
+def open_mpesa_info():
+    global donation_unlocked
+    messagebox.showinfo("M-Pesa / Telebirr Info",
+                        "To support us via M-Pesa or Telebirr:\nM-Pesa Number: +2547XXXXXXX\nTelebirr ID: 092XXXXXXX\nThank you!")
+    confirm = messagebox.askyesno("Confirm Payment", "Have you completed your payment?")
+    if confirm:
+        donation_unlocked = True
+        unlock_features()
+def unlock_features():
+    global locked_buttons
+    for btn in locked_buttons:
+        btn.config(state="normal", text=btn.cget("text").replace(LOCK_EMOJI, "").strip())
+    messagebox.showinfo("Thank You!", "Features unlocked! Enjoy GADA GUIDE!")
+# --- Encryption ---
+def load_or_create_key():
+    key_file = "secret.key"
+    if os.path.exists(key_file):
+        with open(key_file, "rb") as f:
+            return f.read()
+    else:
+        key = Fernet.generate_key()
+        with open(key_file, "wb") as f:
+            f.write(key)
+        return key
+
+FERNET_KEY = load_or_create_key()
+fernet = Fernet(FERNET_KEY)
+
+def encrypt_text(text):
+    return fernet.encrypt(text.encode()).decode()
+
+def decrypt_text(token):
+    try:
+        return fernet.decrypt(token.encode()).decode()
+    except Exception:
+        return "<decryption error>"
+# --- Firebase ---
+def init_firebase():
+    global db
+    try:
+        cred = credentials.Certificate("firebase_key.json")  # path to your key file
+        firebase_admin.initialize_app(cred)
+        db = firestore.client()
+        print(" Firebase connected.")
+    except Exception as e:
+        print(" Firebase error:", e)
+        db = None  # Ensure db is None on failure
+def fetch_firebase_logs():
+    global db
+    if db is None:
+        return " Firebase not initialized."
+    try:
+        docs = db.collection("emotion_logs").get()
+        logs = []
+        for doc in docs:
+            data = doc.to_dict()
+            logs.append({
+                "email": data.get("email", "unknown"),
+                "emotion": data.get("last_emotion", "N/A"),
+                "text": data.get("last_text", ""),
+                "timestamp": data.get("timestamp")
+            })
+        return logs
+    except Exception as e:
+        return f" Error fetching Firebase logs: {e}"
+def save_emotion_to_firebase(email, emotion, text):
+    global db
+    try:
+        doc_ref = db.collection("emotion_logs").document(email)
+        doc_ref.set({
+            "email": email,
+            "last_emotion": emotion,
+            "last_text": text,
+            "timestamp": firestore.SERVER_TIMESTAMP
+        }, merge=True)
+        print(f" Data saved for {email}")
+    except Exception as e:
+        print(" Error saving to Firebase:", e)
+def save_user_preferences_to_firebase(email, preferences):
+    global db
+    try:
+        doc_ref = db.collection("user_preferences").document(email)
+        doc_ref.set(preferences, merge=True)
+        print(f" Preferences saved for {email}")
+    except Exception as e:
+        print(" Error saving preferences:", e)
+# --- Emotion Analysis and Logging ---
+def analyze_emotion(text):
+    positive = ['happy', 'good', 'great', 'love', 'awesome']
+    negative = ['sad', 'bad', 'angry', 'hate', 'terrible']
+    t = text.lower()
+    if any(word in t for word in positive):
+        return "Positive"
+    elif any(word in t for word in negative):
+        return "Negative"
+    else:
+        return "Neutral"
+def get_emotion(text):
+    text = text.lower()
+    if any(word in text for word in ["happy", "joy", "love", "glad"]):
+        return "happy", random.randint(70, 100)
+    elif any(word in text for word in ["sad", "tired", "lonely", "depressed"]):
+        return "sad", random.randint(50, 70)
+    elif any(word in text for word in ["sick", "pain", "help", "unwell", "hurt"]):
+        return "unwell", random.randint(30, 60)
+    elif any(word in text for word in ["angry", "mad", "frustrated"]):
+        return "angry", random.randint(60, 90)
+    else:
+        return "neutral", random.randint(60, 80)
+def emergency_check(emotion, intensity):
+    return emotion == "unwell" and intensity < 50
+def log_data(user_email, text, emotion, intensity):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    encrypted = encrypt_text(f"{text}|{emotion}|{intensity}|{timestamp}")
+    with open("user_logs.csv", mode="a", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow([user_email, text, emotion, intensity, timestamp])
+    conn = sqlite3.connect("gada_guide_logs.db")
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS logs (
+                 id INTEGER PRIMARY KEY,
+                 user_email TEXT,
+                 input_text TEXT,
+                 emotion TEXT,
+                 intensity INTEGER,
+                 encrypted_log TEXT,
+                 timestamp TEXT)''')
+    c.execute("INSERT INTO logs (user_email, input_text, emotion, intensity, encrypted_log, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+              (user_email, text, emotion, intensity, encrypted, timestamp))
+    conn.commit()
+    conn.close()
+# --- Text-to-Speech ---
+def speak(text, lang='en'):
+    if lang == 'en':
+        engine = pyttsx3.init()
+        engine.setProperty('rate', 150)
+        voices = engine.getProperty('voices')
+        engine.setProperty('voice', voices[0].id)
+        engine.say(text)
+        engine.runAndWait()
+    else:
+        try:
+            tts = gTTS(text=text, lang=lang)
+            with tempfile.NamedTemporaryFile(delete=True, suffix=".mp3") as fp:
+                tts.save(fp.name)
+                playsound.playsound(fp.name)
+        except Exception as e:
+            print(f"TTS error: {e}")
+            engine = pyttsx3.init()
+            engine.say(text)
+            engine.runAndWait()
+# --- Speak & Translate ---
+def speech_to_speech_translate_gui(selected_lang_code):
+    recognizer = sr.Recognizer()
+    mic = sr.Microphone()
+    translator = Translator()
+
+    messagebox.showinfo("Speak Now", "Please speak now. Listening...")
+
+    with mic as source:
+        recognizer.adjust_for_ambient_noise(source)
+        audio = recognizer.listen(source)
+
+    try:
+        spoken_text = recognizer.recognize_google(audio)
+    except Exception as e:
+        messagebox.showerror("Error", f"Could not understand audio: {e}")
+        return
+
+    try:
+        detected_lang = translator.detect(spoken_text).lang
+    except Exception:
+        detected_lang = 'en'  # fallback
+
+    try:
+        translated = translator.translate(spoken_text, src=detected_lang, dest=selected_lang_code)
+        translated_text = translated.text
+    except Exception as e:
+        messagebox.showerror("Error", f"Translation failed: {e}")
+        return
+
+    messagebox.showinfo("Translation", f"Detected Language: {detected_lang}\n\nOriginal: {spoken_text}\n\nTranslated: {translated_text}")
+
+    try:
+        tts = gTTS(text=translated_text, lang=selected_lang_code)
+        with tempfile.NamedTemporaryFile(delete=True, suffix=".mp3") as fp:
+            tts.save(fp.name)
+            playsound.playsound(fp.name)
+    except Exception as e:
+        messagebox.showerror("Error", f"Text-to-Speech error: {e}")
+# --- Translate Image Text ---
+def select_image_translate():
+    file_path = filedialog.askopenfilename()
+    if file_path:
+        try:
+            lang = 'en'  # or detect(text) if you want dynamic detection
+            original, translated = translate_image_text(file_path, lang)
+            messagebox.showinfo("Image Translation", f"Original: {original}\n\nTranslated: {translated}")
+            speak(translated, lang)
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+# --- Dummy Pulse and Sensor ---
+def analyze_pulse_from_camera(duration=10):
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print(" Webcam not accessible.")
+        messagebox.showerror("Error", "Webcam not accessible.")
+        return None
+
+    green_intensity = []
+    start_time = datetime.datetime.now()
+
+    while (datetime.datetime.now() - start_time).seconds < duration:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        h, w, _ = frame.shape
+        roi = frame[h//2-50:h//2+50, w//2-50:w//2+50]
+        mean_green = np.mean(roi[:, :, 1])
+        green_intensity.append(mean_green)
+
+        cv2.rectangle(frame, (w//2-50, h//2-50), (w//2+50, h//2+50), (0, 255, 0), 2)
+        cv2.putText(frame, "Place your fingertip or face in the box", (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        cv2.imshow("Pulse Detection", frame)
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+    if len(green_intensity) < 2:
+        print(" Not enough data for pulse analysis.")
+        messagebox.showerror("Error", "Not enough data for pulse analysis.")
+        return None
+
+    signal = np.array(green_intensity)
+    signal = (signal - np.mean(signal)) / np.std(signal)
+    peaks, _ = find_peaks(signal, distance=15)
+    beats = len(peaks)
+    bpm = beats * (60 / duration)
+    return int(bpm)
+def analyze_pulse_thread():
+    bpm = analyze_pulse_from_camera()
+    if bpm:
+        messagebox.showinfo("Pulse Analysis Result", f"Pulse: {bpm} BPM")
+def simulate_external_sensor_reading():
+    return random.randint(60, 100)
+# --- Wellness Heatmap Export ---
+def export_wellness_heatmap():
+    times = [datetime.datetime.now() - datetime.timedelta(minutes=5*i) for i in reversed(range(10))]
+    intensities = [random.randint(40, 100) for _ in range(10)]
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(times, intensities, marker='o', linestyle='-', color='blue')
+    plt.title("Wellness Intensity Over Time")
+    plt.xlabel("Time")
+    plt.ylabel("Emotion Intensity (%)")
+    plt.grid(True)
+    plt.tight_layout()
+
+    save_path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG Files","*.png")], title="Save Wellness Heatmap")
+    if save_path:
+        plt.savefig(save_path)
+        messagebox.showinfo("Saved", f"Heatmap saved to {save_path}")
+    plt.close()
+# --- Analyze Action ---
+def analyze_action(email_entry, input_box):
+    user_email = email_entry.get().strip()
+    text = input_box.get("1.0", tk.END).strip()
+    if not user_email or not text:
+        messagebox.showwarning("Missing Data", "Please enter your email and how you feel.")
+        return
+    try:
+        lang = detect(text)
+    except:
+        lang = 'en'
+    emotion, intensity = get_emotion(text)
+    log_data(user_email, text, emotion, intensity)
+    save_emotion_to_firebase(user_email, emotion, text)
+    greeting = f"Emotion: {emotion.capitalize()} ({intensity}%)"
+    speak(greeting, lang)
+    messagebox.showinfo("Analysis Result", greeting)
+    if emergency_check(emotion, intensity):
+        messagebox.showerror("🚨 Emergency Alert", "Health warning detected! Seek help immediately.")
+
+# --- New Innovative Features ---
+def recommend_attractions(user_emotion, city="Addis Ababa"):
+    """Recommend tourist spots based on mood and location (offline dataset)."""
+    mood_map = {
+        "happy": ["Nature", "Cultural"],
+        "sad": ["Nature", "Relaxation"],
+        "angry": ["Relaxation"],
+        "neutral": ["Historical", "Cultural"],
+        "unwell": ["Hospital", "Pharmacy"]
+    }
+    categories = mood_map.get(user_emotion, ["Cultural"])
+    matches = [place for place in TOURISM_DATA if place["city"].lower() == city.lower() and place["category"] in categories]
+    if not matches:
+        matches = [place for place in TOURISM_DATA if place["city"].lower() == city.lower()]
+    return matches[:3]  # top 3
+
+def show_tourism_recommendations(email_entry, input_box):
+    user_email = email_entry.get().strip()
+    text = input_box.get("1.0", tk.END).strip()
+    if not user_email or not text:
+        messagebox.showwarning("Missing Data", "Please enter your email and how you feel.")
+        return
+    emotion, _ = get_emotion(text)
+    recs = recommend_attractions(emotion)
+    if not recs:
+        messagebox.showinfo("No Recommendations", "Sorry, no recommendations available for your area.")
+        return
+    msg = "Based on your mood, we recommend these places:\n\n"
+    for place in recs:
+        msg += f"🏞️ {place['name']} ({place['category']}): {place['description']}\nTips: {place['tips']}\n\n"
+    messagebox.showinfo("Tourism Recommendations", msg)
+    # Save preferences locally & Firebase
+    USER_PREFERENCES[user_email] = {"last_recommendations": recs}
+    save_user_preferences_to_firebase(user_email, USER_PREFERENCES[user_email])
+
+def open_phrasebook():
+    phrasebook = {
+        "Hello": {"en": "Hello", "om": "Akkam", "am": "Selam"},
+        "Thank you": {"en": "Thank you", "om": "Galatoomi", "am": "Ameseginalehu"},
+        "Where is the restroom?": {"en": "Where is the restroom?", "om": "Mana fincaanii eessaa?", "am": "Metsi aydelehonew?"},
+        "Help!": {"en": "Help!", "om": "Gargaarsa!", "am": "Aydelem!"},
+    }
+    pb_win = tk.Toplevel()
+    pb_win.title("🗣️ Multilingual Phrasebook")
+    pb_win.geometry("500x300")
+    pb_win.configure(bg="#34495E")
+
+    tk.Label(pb_win, text="Phrase", font=FONT_LABEL, bg="#34495E", fg="white").grid(row=0, column=0, padx=10, pady=8)
+    tk.Label(pb_win, text="English", font=FONT_LABEL, bg="#34495E", fg="white").grid(row=0, column=1, padx=10, pady=8)
+    tk.Label(pb_win, text="Afaan Oromo", font=FONT_LABEL, bg="#34495E", fg="white").grid(row=0, column=2, padx=10, pady=8)
+    tk.Label(pb_win, text="Amharic", font=FONT_LABEL, bg="#34495E", fg="white").grid(row=0, column=3, padx=10, pady=8)
+
+    for i, (phrase, translations) in enumerate(phrasebook.items(), start=1):
+        tk.Label(pb_win, text=phrase, font=FONT_LABEL, bg="#34495E", fg="white").grid(row=i, column=0, padx=10, pady=6)
+        tk.Label(pb_win, text=translations["en"], font=FONT_LABEL, bg="#34495E", fg="white").grid(row=i, column=1, padx=10, pady=6)
+        tk.Label(pb_win, text=translations["om"], font=FONT_LABEL, bg="#34495E", fg="white").grid(row=i, column=2, padx=10, pady=6)
+        tk.Label(pb_win, text=translations["am"], font=FONT_LABEL, bg="#34495E", fg="white").grid(row=i, column=3, padx=10, pady=6)
+
+
+
+def open_streamlit_dashboard():
+    """Open Streamlit dashboard in a new browser tab."""
+    dashboard_script = os.path.join(os.getcwd(), "streamlit_dashboard.py")
+    try:
+        subprocess.Popen([sys.executable, "-m", "streamlit", "run", dashboard_script])
+        print("Streamlit dashboard launched.")
+    except Exception as e:
+        print(" Failed to launch Streamlit dashboard:", e)
+   # Emotion button
+# --- Emotion Input with Voice and Emoji ---
+symbols = {
+    "😊 Happy": "I feel happy and joyful today!",
+    "😢 Sad": "I feel a bit sad and tired.",
+    "🤒 Unwell": "I feel sick and need help.",
+    "😠 Angry": "I feel angry and frustrated.",
+    "😐 Neutral": "I feel okay, nothing special."
+}
+
+emoji_to_text = {label.split()[1].lower(): text for label, text in symbols.items()}
+
+def animate_emoji(emoji_label, emoji):
+    for _ in range(3):
+        emoji_label.config(text="")
+        emoji_label.update()
+        threading.Event().wait(0.2)
+        emoji_label.config(text=emoji)
+        emoji_label.update()
+        threading.Event().wait(0.2)
+
+def log_emotion_to_file(text):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open("emotion_log.txt", "a") as f:
+        f.write(f"{timestamp} - {text}\n")
+
+def symbol_input(text, input_box, result_label, emoji_label):
+    input_box.delete("1.0", tk.END)
+    input_box.insert(tk.END, text)
+    result_label.config(text=text)
+    emoji = [k for k in symbols if symbols[k] == text][0].split()[0]
+    animate_emoji(emoji_label, emoji)
+    threading.Thread(target=speak, args=(text,), daemon=True).start()
+    log_emotion_to_file(text)
+def listen_and_detect(input_box, result_label, emoji_label):
+    recognizer = sr.Recognizer()
+    with sr.Microphone() as source:
+        result_label.config(text="🎤 Listening...")
+        try:
+            audio = recognizer.listen(source, timeout=4)
+            spoken = recognizer.recognize_google(audio).lower()
+            for key in emoji_to_text:
+                if key in spoken:
+                    symbol_input(emoji_to_text[key], input_box, result_label, emoji_label)
+                    return
+            result_label.config(text="⚠️ Emotion not recognized.")
+        except Exception as e:
+            result_label.config(text="🎤 Could not understand.")
+
+def create_main_gui(button_frame=None):
+    global locked_buttons
+    root = tk.Tk()
+    root.title("🧠 GADA GUIDE - Emotion, Wellness & Tourism")
+    root.geometry("900x700")
+    root.configure(bg="#34495E")
+    style = ttk.Style()
+    style.theme_use("clam")
+    style.configure("TButton", font=FONT_BUTTON, foreground="white", background="#2980B9")
+    style.map("TButton",
+              foreground=[('pressed', 'white'), ('active', 'white')],
+              background=[('pressed', '!disabled', '#1F618D'), ('active', '#2471A3')])
+
+    # User Email
+    tk.Label(root, text="Your Email:", font=FONT_LABEL, bg="#34495E", fg="white").grid(row=1, column=0, padx=10, pady=10, sticky="w")
+    email_entry = tk.Entry(root, font=FONT_LABEL, width=25)
+    email_entry.grid(row=1, column=1, pady=10, sticky="w")
+    # Text Input for emotion
+    tk.Label(root, text="How do you feel? (Type here ) :",font=FONT_LABEL,bg="#34495E",fg="white").grid(row=2, column=0, padx=10, pady=10, sticky="w")
+    input_box = tk.Text(root,height=2, width=35, font=FONT_LABEL)
+    input_box.grid(row=2, column=1, padx=10, pady=10)
+    # Emoji label and result label
+    emoji_label = tk.Label(root, text="", font=("Arial", 36), bg="#34495E")
+    emoji_label.grid(row=2, column=2)
+    result_label = tk.Label(root, text="", font=("Arial", 12), bg="#34495E", fg="white")
+    result_label.grid(row=3, column=1, sticky="w")
+    # Analyze Button
+    analyze_btn = ttk.Button(root, text=f"Analyze Emotion & Wellness {LOCK_EMOJI}", width=BTN_WIDTH,state="disabled",
+                             command=lambda: analyze_action(email_entry, input_box))
+    analyze_btn.grid(row=3, column=0, pady=15)
+    locked_buttons.append(analyze_btn)
+    # Pulse Analysis Button (locked by default)
+    pulse_btn = ttk.Button(root, text=f"Analyze Pulse from Camera {LOCK_EMOJI}", width=BTN_WIDTH, state="disabled",
+                           command=lambda: threading.Thread(target=analyze_pulse_thread).start())
+    pulse_btn.grid(row=5, column=2, pady=15)
+    locked_buttons.append(pulse_btn)
+    # Wellness Heatmap Export Button (locked)
+    heatmap_btn = ttk.Button(root, text=f"Export Wellness Heatmap {LOCK_EMOJI}", width=BTN_WIDTH, state="disabled",
+                             command=export_wellness_heatmap)
+    heatmap_btn.grid(row=5, column=0, pady=15)
+    locked_buttons.append(heatmap_btn)
+    # Translate Speech Button
+    translate_lang_var = tk.StringVar(value="en")
+    lang_choices = {"English": "en", "Afaan Oromo": "om", "Amharic": "am"}
+    tk.Label(root, text="Translate Speech To:", font=FONT_LABEL, bg="#34495E", fg="white").grid(row=3, column=1, padx=10, pady=10, sticky="w")
+    lang_menu = ttk.Combobox(root, textvariable=translate_lang_var, values=list(lang_choices.keys()), state="readonly", width=33)
+    lang_menu.grid(row=3, column=1, padx=10, pady=10, sticky="w")
+    def on_translate_speech():
+        selected = lang_choices.get(translate_lang_var.get(), "en")
+        threading.Thread(target=speech_to_speech_translate_gui, args=(selected,)).start()
+    translate_speech_btn = ttk.Button(root,text=f"Speak & Translate to target  {LOCK_EMOJI}",width=BTN_WIDTH, command=on_translate_speech,state="disabled")
+    translate_speech_btn.grid(row=3, column=2, pady=15)
+    locked_buttons.append(translate_speech_btn)
+    # Translate Image Text Button
+    img_translate_btn = ttk.Button(root, text=f"Translate Text from Image {LOCK_EMOJI}" ,width=BTN_WIDTH, command=select_image_translate,state="disabled")
+    img_translate_btn.grid(row=4, column=2, pady=15)
+    locked_buttons.append(img_translate_btn)
+    # Tourism Recommendation Button (locked by default)
+    tourism_btn = ttk.Button(root, text=f"Get Tourism Recommend- {LOCK_EMOJI}", width=BTN_WIDTH, state="disabled",
+                             command=lambda:show_tourism_recommendations(email_entry, input_box))
+    tourism_btn.grid(row=4, column=0, pady=15)
+    locked_buttons.append(tourism_btn)
+    # Phrasebook Button
+    phrasebook_btn = ttk.Button(root, text=f"Multilingual Phrasebook {LOCK_EMOJI}" ,width=BTN_WIDTH, command=open_phrasebook,state="disabled")
+    phrasebook_btn.grid(row=6, column=2, pady=15)
+    locked_buttons.append(phrasebook_btn)
+    #pay_frame
+    # Monetization Buttons
+    pay_frame = tk.Frame(root, bg="#34495E")
+    pay_frame.grid(row=0, column=1, pady=20)
+    paypal_btn = ttk.Button(root, text="Donate via PayPal 💳", width=20, command=open_paypal)
+    paypal_btn.grid(row=0, column=0, padx=10)
+    mpesa_btn = ttk.Button(root, text="Donate via M-Pesa/Telebirr 💰", width=25, command=open_mpesa_info)
+    mpesa_btn.grid(row=0, column=1, padx=10)
+    streamlit_dashboard_btn = ttk.Button(root, text=f"📊 Open Dashboard  {LOCK_EMOJI}", command=open_streamlit_dashboard,
+                                         width=BTN_WIDTH, state="disabled")
+    streamlit_dashboard_btn.grid(row=6, column=0, pady=15)
+    locked_buttons.append(streamlit_dashboard_btn)
+    # FIXED: symbol_input button with proper args
+    symbol_input_btn = ttk.Button(
+        root,
+        text=f"😊 I'm Happy {LOCK_EMOJI}",
+        command=lambda: symbol_input(symbols["😊 Happy"], input_box, result_label, emoji_label),
+        width=BTN_WIDTH,
+        state="disabled"
+    )
+    symbol_input_btn.grid(row=0, column=2, pady=15)
+    locked_buttons.append(symbol_input_btn)
+    # Emotion Buttons
+    emo_frame = tk.Frame(root, bg="#34495E")
+    emo_frame.grid(row=7, column=0, columnspan=3)
+
+    for i, (label, message) in enumerate(symbols.items()):
+        btn = ttk.Button(
+            emo_frame, text=label,
+            command=lambda msg=message: symbol_input(msg, input_box, result_label, emoji_label),
+            width=18
+        )
+        btn.grid(row=i // 3, column=i % 3, padx=5, pady=5)
+
+    # 🎙️ Voice Input Button
+    voice_btn = ttk.Button(root, text=f"🎙️ Speak Emotion", width=BTN_WIDTH,
+                           command=lambda: threading.Thread(
+                               target=listen_and_detect,
+                               args=(input_box, result_label, emoji_label),
+                               daemon=True).start())
+    voice_btn.grid(row=8, column=0, columnspan=2, pady=10)
+    # Start Firebase
+    init_firebase()
+    root.mainloop()
+# FIXED: Main entry point
+if __name__ == "__main__":
+    create_main_gui()
