@@ -149,8 +149,8 @@ from email.message import EmailMessage
 
 email = EmailMessage()
 email['Subject'] = 'Scraping Done!'
-email['From'] = 'your@gmail.com'
-email['To'] = 'client@example.com'
+email['From'] = 'oljelikonafo@gmail.com'
+email['To'] = 'trafficmanager@gmail.com'
 email.set_content('Your data scraping task is complete.')
 
 with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
