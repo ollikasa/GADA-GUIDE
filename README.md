@@ -89,3 +89,74 @@ We are currently looking for:
 
 © 2025 GADA GUIDE – All rights reserved.
 
+
+#Product Info Scraper (E-Commerce):
+
+
+
+
+import requests
+from bs4 import BeautifulSoup
+import csv
+
+url = "https://books.toscrape.com/catalogue/category/books/travel_2/index.html"
+response = requests.get(url)
+soup = BeautifulSoup(response.text, "html.parser")
+products = soup.find_all("article", class_="product_pod")
+
+with open("travel_books.csv", "w", newline='', encoding='utf-8') as f:
+    writer = csv.writer(f)
+    writer.writerow(["Title", "Price", "Rating"])
+
+    for product in products:
+        title = product.h3.a["title"]
+        price = product.find("p", class_="price_color").text
+        rating = product.p["class"][1]
+        writer.writerow([title, price, rating])
+
+print(" travel_books.csv created")
+
+
+
+#Auto-Fill Form Automation (Using Selenium):
+
+
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+import time
+
+driver = webdriver.Chrome()
+driver.get("https://www.w3schools.com/html/html_forms.asp")
+
+name_input = driver.find_element(By.NAME, "firstname")
+last_input = driver.find_element(By.NAME, "lastname")
+
+name_input.send_keys("John")
+last_input.send_keys("Doe")
+
+submit_btn = driver.find_element(By.XPATH, "//form[@action='/action_page.php']//input[@type='submit']")
+submit_btn.click()
+
+time.sleep(2)
+driver.quit()
+
+
+
+#Email Notification Bot (Using SMTP):
+
+import smtplib
+from email.message import EmailMessage
+
+email = EmailMessage()
+email['Subject'] = 'Scraping Done!'
+email['From'] = 'your@gmail.com'
+email['To'] = 'client@example.com'
+email.set_content('Your data scraping task is complete.')
+
+with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+    smtp.login('your@gmail.com', 'your_app_password')
+    smtp.send_message(email)
+
+print("Email sent")
+
+
