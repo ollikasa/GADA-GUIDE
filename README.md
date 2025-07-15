@@ -154,7 +154,7 @@ email['To'] = 'trafficmanager@gmail.com'
 email.set_content('Your data scraping task is complete.')
 
 with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-    smtp.login('your@gmail.com', 'your_app_password')
+    smtp.login('oljelikonafo@gmail.com', 'your_app_password')
     smtp.send_message(email)
 
 print("Email sent")
